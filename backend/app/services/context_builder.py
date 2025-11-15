@@ -151,13 +151,22 @@ class ChromaVectorClient(VectorClient):
                 query_embeddings = self._embedding_client.embed_texts([query_text])
                 if query_embeddings:
                     # Validate query embedding dimension matches collection dimension
-                    query_dim = len(query_embeddings[0])
+                    import numpy as np
+                    # Convert to list if it's a numpy array
+                    query_emb = query_embeddings[0]
+                    if isinstance(query_emb, np.ndarray):
+                        query_emb = query_emb.tolist()
+                    query_dim = len(query_emb)
                     collection_count = collection_obj.count()
                     if collection_count > 0:
                         # Check collection dimension by peeking at existing embeddings
                         sample_result = collection_obj.peek(limit=1)
                         if sample_result.get("embeddings") and len(sample_result["embeddings"]) > 0:
-                            collection_dim = len(sample_result["embeddings"][0])
+                            # Convert to list if it's a numpy array
+                            sample_emb = sample_result["embeddings"][0]
+                            if isinstance(sample_emb, np.ndarray):
+                                sample_emb = sample_emb.tolist()
+                            collection_dim = len(sample_emb)
                             if query_dim != collection_dim:
                                 logger.error(
                                     f"Dimension mismatch in query for collection '{collection}': "
@@ -168,8 +177,16 @@ class ChromaVectorClient(VectorClient):
                                 )
                                 return []  # Return empty results rather than failing
                     
+                    # Ensure query embeddings are lists (not numpy arrays) for ChromaDB compatibility
+                    query_emb_list = []
+                    for emb in query_embeddings:
+                        if isinstance(emb, np.ndarray):
+                            query_emb_list.append(emb.tolist())
+                        else:
+                            query_emb_list.append(emb)
+                    
                     query_kwargs = {
-                        "query_embeddings": query_embeddings,
+                        "query_embeddings": query_emb_list,
                         "n_results": n_results
                     }
                     if where_clause:
