@@ -412,3 +412,101 @@ class EmbeddingService:
         """Close resources."""
         self.client.close()
 
+import os
+import numpy as np
+from werkzeug.utils import secure_filename
+import PyPDF2
+import requests
+from dotenv import load_dotenv
+from sqlalchemy.orm import Session
+
+load_dotenv()
+
+DATA_ROOT = os.getenv("DATA_ROOT", "./data")
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "80"))
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
+
+# NEW FUNCTIONS FOR LEGISLATION UPLOAD
+def extract_text_from_file(path):
+    """Extract text from PDF or TXT file."""
+    if path.lower().endswith(".pdf"):
+        text = []
+        with open(path, "rb") as f:
+            reader = PyPDF2.PdfReader(f)
+            for page in reader.pages:
+                text.append(page.extract_text() or "")
+        return "\n".join(text)
+    else:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read()
+
+def chunk_text(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
+    """Split text into overlapping chunks."""
+    words = text.split()
+    chunks = []
+    i = 0
+    while i < len(words):
+        chunk = words[i:i+chunk_size]
+        chunks.append(" ".join(chunk))
+        i += chunk_size - overlap
+    return chunks
+
+def embed_chunks(chunks):
+    """Call OpenRouter embedding API."""
+    url = "https://api.openrouter.ai/v1/embeddings"
+    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}"}
+    payload = {"model": EMBEDDING_MODEL, "input": chunks}
+    resp = requests.post(url, json=payload, headers=headers, timeout=60)
+    resp.raise_for_status()
+    data = resp.json()
+    embeddings = [d.get("embedding") for d in data.get("data", [])]
+    return embeddings
+
+def process_legislation_file(file, filename, db_session: Session):
+    """Save file, extract text, chunk, embed, and store in DB."""
+    uploads_dir = os.path.join(DATA_ROOT, "uploads")
+    os.makedirs(uploads_dir, exist_ok=True)
+    
+    safe_name = secure_filename(filename)
+    save_path = os.path.join(uploads_dir, safe_name)
+    file.save(save_path)
+    
+    text = extract_text_from_file(save_path)
+    if not text.strip():
+        raise ValueError("No text extracted from file")
+    
+    chunks = chunk_text(text)
+    embeddings = embed_chunks(chunks)
+    
+    # Save to database
+    from ..db.models import Legislation, LegislationChunk
+    legislation = Legislation(
+        filename=safe_name,
+        file_path=save_path,
+        text_length=len(text),
+        num_chunks=len(chunks),
+    )
+    db_session.add(legislation)
+    db_session.flush()
+    
+    for idx, (chunk_text_val, embedding) in enumerate(zip(chunks, embeddings)):
+        embedding_bytes = np.array(embedding).astype(np.float32).tobytes()
+        chunk_record = LegislationChunk(
+            legislation_id=legislation.id,
+            chunk_index=idx,
+            text=chunk_text_val,
+            embedding=embedding_bytes,
+        )
+        db_session.add(chunk_record)
+    
+    db_session.commit()
+    
+    return {
+        "id": legislation.id,
+        "filename": safe_name,
+        "path": save_path,
+        "text_length": len(text),
+        "num_chunks": len(chunks),
+    }

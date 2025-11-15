@@ -247,3 +247,32 @@ class ComplianceScore(Base, TimestampMixin):
     audit: Mapped[Audit] = relationship()
 
 
+
+
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, LargeBinary
+from sqlalchemy.orm import relationship
+from datetime import datetime
+
+class Legislation(Base):
+    __tablename__ = "legislations"
+    
+    id = Column(Integer, primary_key=True)
+    filename = Column(String(255), nullable=False)
+    file_path = Column(String(500), nullable=False)
+    text_length = Column(Integer)
+    num_chunks = Column(Integer)
+    uploaded_at = Column(DateTime, default=datetime.utcnow)
+    
+    chunks = relationship("LegislationChunk", back_populates="legislation", cascade="all, delete-orphan")
+
+class LegislationChunk(Base):
+    __tablename__ = "legislation_chunks"
+    
+    id = Column(Integer, primary_key=True)
+    legislation_id = Column(Integer, ForeignKey("legislations.id"), nullable=False)
+    chunk_index = Column(Integer)
+    text = Column(Text, nullable=False)
+    embedding = Column(LargeBinary)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    legislation = relationship("Legislation", back_populates="chunks")

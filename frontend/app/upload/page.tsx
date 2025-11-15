@@ -23,6 +23,12 @@ export default function UploadPage() {
   const [success, setSuccess] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
+  // ...existing code...
+  const [legislationFile, setLegislationFile] = useState<File | null>(null);
+  const [legislationUploading, setLegislationUploading] = useState(false);
+  const [legislationError, setLegislationError] = useState<string | null>(null);
+  const [legislationSuccess, setLegislationSuccess] = useState(false);
+
   const validateFile = (selectedFile: File) => {
     const maxSize = 50 * 1024 * 1024; // 50MB
     if (selectedFile.size > maxSize) {
@@ -41,6 +47,19 @@ export default function UploadPage() {
     }
   };
 
+  const handleLegislationFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (selectedFile) {
+      const maxSize = 50 * 1024 * 1024;
+      if (selectedFile.size > maxSize) {
+        setLegislationError("File size exceeds 50MB limit");
+        return;
+      }
+      setLegislationFile(selectedFile);
+      setLegislationError(null);
+    }
+  };
+
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -50,8 +69,6 @@ export default function UploadPage() {
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    // Only set dragging to false if we're actually leaving the drop zone
-    // (not just moving to a child element)
     const currentTarget = e.currentTarget;
     const relatedTarget = e.relatedTarget as Node | null;
     if (!currentTarget.contains(relatedTarget)) {
@@ -70,7 +87,6 @@ export default function UploadPage() {
     }
   };
 
-  // Prevent default browser behavior when dragging files over the page
   useEffect(() => {
     const handleGlobalDragOver = (e: DragEvent) => {
       e.preventDefault();
@@ -102,7 +118,6 @@ export default function UploadPage() {
     setProgress(0);
     setError(null);
 
-    // Simulate progress
     const progressInterval = setInterval(() => {
       setProgress((prev) => {
         if (prev < 90) return prev + 10;
@@ -129,6 +144,36 @@ export default function UploadPage() {
       setError(err.message || "Failed to upload document");
       setUploading(false);
       setProgress(0);
+    }
+  };
+
+  // NEW: Handle legislation upload
+  const handleLegislationSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!legislationFile) {
+      setLegislationError("Please select a legislation file");
+      return;
+    }
+
+    setLegislationUploading(true);
+    setLegislationError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", legislationFile);
+      const res = await fetch("http://localhost:5000/api/legislation/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Upload failed");
+      setLegislationSuccess(true);
+      setLegislationFile(null);
+      setTimeout(() => setLegislationSuccess(false), 3000);
+    } catch (err: any) {
+      setLegislationError(err.message || "Failed to upload legislation");
+    } finally {
+      setLegislationUploading(false);
     }
   };
 
@@ -298,7 +343,89 @@ export default function UploadPage() {
           </ol>
         </CardContent>
       </Card>
+
+      {/* NEW: Legislation Upload Card */}
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle className="text-3xl">Upload Legislation</CardTitle>
+          <CardDescription>
+            Upload legislation files to be embedded and indexed for cross-reference during audits. Supported formats: PDF, TXT.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleLegislationSubmit} className="space-y-6">
+            <div className="space-y-2">
+              <Label htmlFor="legislation-file">
+                Legislation File <span className="text-destructive">*</span>
+              </Label>
+              <div className="flex items-center justify-center w-full">
+                <label
+                  htmlFor="legislation-file"
+                  className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer border-border hover:bg-accent transition-colors"
+                >
+                  <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                    <Upload className="w-10 h-10 mb-3 text-muted-foreground" />
+                    <p className="mb-2 text-sm text-muted-foreground">
+                      <span className="font-semibold">Click to upload</span> or drag and drop
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      PDF, TXT (MAX. 50MB)
+                    </p>
+                  </div>
+                  <input
+                    id="legislation-file"
+                    type="file"
+                    className="hidden"
+                    accept=".pdf,.txt"
+                    onChange={handleLegislationFileChange}
+                    disabled={legislationUploading}
+                  />
+                </label>
+              </div>
+              {legislationFile && (
+                <div className="flex items-center gap-2 p-3 bg-muted rounded-md">
+                  <FileText className="h-5 w-5 text-primary" />
+                  <span className="text-sm font-medium">{legislationFile.name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    ({(legislationFile.size / 1024 / 1024).toFixed(2)} MB)
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {legislationError && (
+              <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
+                <p className="text-sm text-destructive">{legislationError}</p>
+              </div>
+            )}
+
+            {legislationSuccess && (
+              <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-md flex items-center gap-2">
+                <CheckCircle2 className="h-5 w-5 text-green-500" />
+                <p className="text-sm text-green-700 dark:text-green-400">
+                  Legislation uploaded and embedded successfully!
+                </p>
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <Button type="submit" disabled={legislationUploading || !legislationFile} className="flex-1 bg-green-600 hover:bg-green-700">
+                {legislationUploading ? (
+                  <>
+                    <Upload className="mr-2 h-4 w-4 animate-pulse" />
+                    Embedding...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="mr-2 h-4 w-4" />
+                    Upload & Embed Legislation
+                  </>
+                )}
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 }
-
