@@ -99,10 +99,12 @@ start_backend() {
 
 # Function to start Next.js frontend
 start_frontend() {
-    echo -e "${GREEN}Starting Next.js frontend on port 3000...${NC}"
+    # Use PORT env var if set (for cloud platforms), otherwise default to 3000
+    FRONTEND_PORT=${PORT:-3000}
+    echo -e "${GREEN}Starting Next.js frontend on port ${FRONTEND_PORT}...${NC}"
     cd /app/frontend
-    # Use npm start which runs next start
-    npm start &
+    # Set PORT for Next.js and use npm start which runs next start
+    PORT=${FRONTEND_PORT} npm start &
     FRONTEND_PID=$!
     echo -e "${GREEN}Frontend started (PID: $FRONTEND_PID)${NC}"
 }
@@ -126,7 +128,8 @@ wait_for_services() {
     
     # Wait for frontend
     for i in {1..30}; do
-        if curl -f http://localhost:3000 > /dev/null 2>&1; then
+        FRONTEND_PORT=${PORT:-3000}
+        if curl -f http://localhost:${FRONTEND_PORT} > /dev/null 2>&1; then
             echo -e "${GREEN}Frontend is ready!${NC}"
             break
         fi
@@ -162,8 +165,9 @@ case "${1:-start}" in
         wait_for_services
         echo -e "${GREEN}========================================${NC}"
         echo -e "${GREEN}AI Auditing System is running!${NC}"
+        FRONTEND_PORT=${PORT:-3000}
         echo -e "${GREEN}Backend:  http://localhost:5000${NC}"
-        echo -e "${GREEN}Frontend: http://localhost:3000${NC}"
+        echo -e "${GREEN}Frontend: http://localhost:${FRONTEND_PORT}${NC}"
         echo -e "${GREEN}========================================${NC}"
         # Keep container running
         wait
