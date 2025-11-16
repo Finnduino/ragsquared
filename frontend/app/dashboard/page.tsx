@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,8 +17,10 @@ export default function DashboardPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [draftFilter, setDraftFilter] = useState<string>("all");
 
-  const loadAudits = async () => {
-    setLoading(true);
+  const loadAudits = useCallback(async (showLoading = true) => {
+    if (showLoading) {
+      setLoading(true);
+    }
     try {
       const filters: any = {};
       if (statusFilter && statusFilter !== "all") filters.status = statusFilter;
@@ -28,15 +30,30 @@ export default function DashboardPage() {
     } catch (error) {
       console.error("Failed to load audits:", error);
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
-  };
-
-  useEffect(() => {
-    loadAudits();
-    const interval = setInterval(loadAudits, 5000);
-    return () => clearInterval(interval);
   }, [statusFilter, draftFilter]);
+
+  // Load audits when filters change (with loading indicator)
+  useEffect(() => {
+    loadAudits(true);
+  }, [loadAudits]);
+
+  // Poll only when there are active audits (without loading indicator)
+  useEffect(() => {
+    const hasActiveAudits = audits.some(
+      (audit: AuditWithDetails) => audit.status === "running" || audit.status === "queued"
+    );
+    
+    if (!hasActiveAudits) {
+      return; // No need to poll if no active audits
+    }
+    
+    const interval = setInterval(() => loadAudits(false), 5000);
+    return () => clearInterval(interval);
+  }, [audits, loadAudits]);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
