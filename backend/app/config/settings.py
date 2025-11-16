@@ -49,12 +49,12 @@ class AppConfig:
         default_factory=lambda: os.getenv("LLM_API_BASE_URL") or os.getenv("OPENROUTER_API_URL", "https://openrouter.ai/api/v1")
     )
     llm_model_compliance: str = field(
-        default_factory=lambda: os.getenv("LLM_MODEL_COMPLIANCE") or os.getenv("OPENROUTER_MODEL_COMPLIANCE", "openrouter/horizon-beta")
+        default_factory=lambda: os.getenv("LLM_MODEL_COMPLIANCE") or os.getenv("OPENROUTER_MODEL_COMPLIANCE", "anthropic/claude-3.5-sonnet")
     )
     # Backward compatibility
     openrouter_api_key: str = field(default_factory=lambda: os.getenv("OPENROUTER_API_KEY", ""))
     openrouter_model_compliance: str = field(
-        default_factory=lambda: os.getenv("OPENROUTER_MODEL_COMPLIANCE", "openrouter/horizon-beta")
+        default_factory=lambda: os.getenv("OPENROUTER_MODEL_COMPLIANCE", "google/gemini-2.5-flash")
     )
     embedding_model: str = field(
         default_factory=lambda: os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")

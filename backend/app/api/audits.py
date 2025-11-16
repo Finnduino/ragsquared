@@ -287,12 +287,19 @@ def resume_audit(audit_id: str) -> tuple[dict[str, object], int]:
     
     logger = get_logger(__name__)
     
+    # Capture app instance while we're still in the request context
+    app = current_app._get_current_object()
+    
     def resume_audit_background():
         """Background thread function to resume audit processing."""
-        app = current_app._get_current_object()
         with app.app_context():
             session = get_session()
             config = AppConfig()
+            # Fetch audit first to get is_draft status
+            audit = _resolve_audit(session, audit_id)
+            if not audit:
+                logger.error(f"Audit {audit_id} not found in background thread")
+                return
             try:
                 runner = ComplianceRunner(session, config)
                 result = runner.run(

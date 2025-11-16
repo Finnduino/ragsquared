@@ -167,6 +167,22 @@ class ComplianceLLMClient(AnalysisClient):
                     else:
                         response.raise_for_status()
                 
+                # Check for 404 errors which often indicate model not found
+                if response.status_code == 404:
+                    error_body = response.text
+                    try:
+                        error_json = response.json()
+                        error_message = error_json.get("error", {}).get("message", error_body)
+                    except Exception:
+                        error_message = error_body
+                    logger.error(
+                        f"404 Not Found from OpenRouter API. This usually means the model '{self.config.model}' "
+                        f"does not exist or is not available. Error: {error_message}. "
+                        f"Please check: 1) Model name is correct, 2) Model is available on OpenRouter, "
+                        f"3) Your API key has access to this model."
+                    )
+                    response.raise_for_status()
+                
                 response.raise_for_status()
                 content = self._extract_content(response.json())
                 # Log the raw content for debugging

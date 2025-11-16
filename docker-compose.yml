@@ -18,7 +18,7 @@ services:
       - LLM_API_KEY=${LLM_API_KEY:-}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-${LLM_API_KEY:-}}
       - LLM_API_BASE_URL=${LLM_API_BASE_URL:-https://openrouter.ai/api/v1}
-      - LLM_MODEL_COMPLIANCE=${LLM_MODEL_COMPLIANCE:-openrouter/horizon-beta}
+      - LLM_MODEL_COMPLIANCE=${LLM_MODEL_COMPLIANCE:-google/gemini-2.5-flash}
       
       # Embedding configuration
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-large}

@@ -54,8 +54,17 @@ except Exception as e:
     fi
     
     set +e  # Temporarily disable exit on error
-    MIGRATION_OUTPUT=$(python -m alembic -c alembic.ini upgrade head 2>&1)
-    MIGRATION_STATUS=$?
+    # Check for multiple heads first
+    HEADS_CHECK=$(python -m alembic -c alembic.ini heads 2>&1 | grep -c "head" || echo "0")
+    if [ "$HEADS_CHECK" -gt "1" ]; then
+        echo -e "${YELLOW}Multiple migration heads detected. Attempting to merge...${NC}"
+        # Try to upgrade to all heads (this will fail if they can't be merged, but that's OK)
+        MIGRATION_OUTPUT=$(python -m alembic -c alembic.ini upgrade heads 2>&1)
+        MIGRATION_STATUS=$?
+    else
+        MIGRATION_OUTPUT=$(python -m alembic -c alembic.ini upgrade head 2>&1)
+        MIGRATION_STATUS=$?
+    fi
     set -e  # Re-enable exit on error
     
     if [ $MIGRATION_STATUS -eq 0 ]; then
