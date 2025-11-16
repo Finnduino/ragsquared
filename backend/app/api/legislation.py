@@ -17,17 +17,25 @@ logger = get_logger(__name__)
 @bp.route("/upload", methods=["POST"])
 def upload_legislation() -> tuple[dict, int]:
     """Upload legislation file, create embeddings, and store in DB."""
+    logger.info("Legislation upload request received")
+    
     if "file" not in request.files:
+        logger.warning("No file in request.files")
         return jsonify({"error": "no file provided"}), 400
 
     file = request.files["file"]
+    logger.info(f"File received: {file.filename}, size: {request.content_length} bytes")
+    
     if file.filename == "":
+        logger.warning("Empty filename")
         return jsonify({"error": "invalid filename"}), 400
 
     try:
+        logger.info("Starting legislation file processing...")
         db_session = get_session()
         # Get config - ensure .env is loaded (it should be from app factory)
         config = AppConfig()
+        logger.info(f"Data root: {config.data_root}, Embedding model: {config.embedding_model}")
         
         # Validate API key is set
         if not config.openrouter_api_key and not config.llm_api_key:
@@ -42,7 +50,9 @@ def upload_legislation() -> tuple[dict, int]:
                 "error": "Configuration error: EMBEDDING_MODEL must be set in environment variables"
             }), 500
         
+        logger.info("Calling process_legislation_file...")
         result = process_legislation_file(file, file.filename, db_session, config)
+        logger.info(f"Legislation upload successful: {result['filename']}, {result['num_chunks']} chunks")
         return jsonify({
             "status": "ok",
             "id": result["id"],

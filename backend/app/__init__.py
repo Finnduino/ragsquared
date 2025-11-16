@@ -32,6 +32,13 @@ def create_app(config_class: type[AppConfig] | None = None) -> Flask:
     template_dir = Path(__file__).parent / "templates"
     app = Flask(__name__, template_folder=str(template_dir))
     app.config.from_mapping(config.to_flask_dict())
+    
+    # Configure file upload limits (50MB max file size)
+    app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50MB
+    
+    # Increase request timeout for long-running uploads (10 minutes)
+    # Note: Railway may have its own timeout limits
+    app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
     register_blueprints(app)
     register_middleware(app)

@@ -243,17 +243,33 @@ export const api = {
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch(`${API_BASE_URL}/api/legislation/upload`, {
-        method: 'POST',
-        body: formData,
-      });
+      // Use AbortController for timeout (10 minutes for large files)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10 * 60 * 1000); // 10 minutes
 
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(error.error || `HTTP ${response.status}`);
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/legislation/upload`, {
+          method: 'POST',
+          body: formData,
+          signal: controller.signal,
+          // Don't set timeout here - let the server handle it
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+          throw new Error(error.error || `HTTP ${response.status}`);
+        }
+
+        return response.json();
+      } catch (err: any) {
+        clearTimeout(timeoutId);
+        if (err.name === 'AbortError') {
+          throw new Error('Upload timeout: The file is too large or processing is taking too long. Please try a smaller file or contact support.');
+        }
+        throw err;
       }
-
-      return response.json();
     },
     list: async () => {
       return fetchAPI<{status: string, legislations: Array<{id: number, filename: string, chunks: number, uploaded_at: string}>}>(`/api/legislation/list`);

@@ -429,156 +429,255 @@ def process_legislation_file(file, filename: str, db_session: Session, config: A
         
     Returns:
         Dictionary with id, filename, num_chunks, text_length
+        
+    Raises:
+        ValueError: For validation errors
+        DocumentUploadError: For file upload errors
+        ExtractionError: For text extraction errors
     """
     from pathlib import Path
     
     from ..config.settings import AppConfig
     from ..db.models import Document, Chunk, Legislation
-    from .documents import DocumentService
+    from .documents import DocumentService, DocumentUploadError
     from .chunking import SemanticChunker, SectionText
-    from ..processing.extraction import DocumentExtractor
+    from ..processing.extraction import DocumentExtractor, ExtractionError
     
     if config is None:
         config = AppConfig()
     
-    # Step 1: Create Document using DocumentService (same as regulations)
-    logger.info("Creating document for legislation upload...")
-    doc_service = DocumentService(Path(config.data_root), db_session)
-    document = doc_service.create_from_upload(
-        file,
-        source_type="regulation",  # Store as regulation so it's used in context building
-        organization="Legislation",
-        description=f"Legislation document: {filename}"
-    )
-    logger.info(f"Created document: {document.original_filename} (ID: {document.id}, External ID: {document.external_id})")
+    document = None
+    legislation = None
     
-    # Step 2: Extract text from document
-    logger.info("Extracting text from document...")
-    storage_path = Path(config.data_root) / document.storage_path
-    if not storage_path.exists():
-        raise ValueError(f"Storage path does not exist: {storage_path}")
-    
-    extractor = DocumentExtractor()
-    extracted_doc = extractor.extract(storage_path)
-    extraction_data = extracted_doc.to_dict()
-    
-    # Convert to SectionText objects for chunking
-    sections = []
-    for idx, section_data in enumerate(extraction_data.get("sections", [])):
-        section_path = section_data.get("metadata", {}).get("section_path")
-        if isinstance(section_path, str):
-            section_path = [section_path]
-        elif not isinstance(section_path, list):
-            section_path = None
-        
-        sections.append(
-            SectionText(
-                index=section_data.get("index", idx),
-                title=section_data.get("title"),
-                content=section_data.get("content", ""),
-                section_path=[str(p) for p in section_path] if section_path else None,
-                metadata=section_data.get("metadata", {}),
-            )
-        )
-    
-    if not sections:
-        # Fallback: create a single section from the full text
-        full_text = extraction_data.get("metadata", {}).get("full_text", "")
-        if not full_text:
-            # Try to read the file directly
-            if storage_path.suffix.lower() == ".pdf":
-                from PyPDF2 import PdfReader
-                reader = PdfReader(str(storage_path))
-                text_parts = []
-                for page in reader.pages:
-                    text_parts.append(page.extract_text() or "")
-                full_text = "\n".join(text_parts)
-            else:
-                with open(storage_path, "r", encoding="utf-8", errors="ignore") as f:
-                    full_text = f.read()
-        
-        if not full_text.strip():
-            raise ValueError("No text extracted from file")
-        
-        sections = [SectionText(index=0, title=None, content=full_text, section_path=None, metadata={})]
-    
-    # Step 3: Chunk the document (same as regulations)
-    logger.info(f"Chunking {len(sections)} sections...")
-    chunker = SemanticChunker(config.chunking)
-    # Use section-aware chunking for legislation (one chunk per section)
-    payloads = chunker.chunk_sections(document.external_id, sections, section_aware=True)
-    logger.info(f"Generated {len(payloads)} chunks")
-    
-    # Step 4: Create Chunk objects in database
-    chunk_objects = []
-    for idx, payload in enumerate(payloads):
-        metadata = {
-            **payload.metadata,
-            "chunk_id": payload.chunk_id,
-            "section_path": payload.section_path,
-            "parent_heading": payload.parent_heading,
-        }
-        section_path = " > ".join(payload.section_path).strip() if payload.section_path else None
-        chunk_row = Chunk(
-            document_id=document.id,
-            chunk_id=payload.chunk_id,
-            chunk_index=idx,
-            section_path=section_path,
-            parent_heading=payload.parent_heading,
-            content=payload.text,
-            token_count=payload.token_count,
-            chunk_metadata=metadata,
-            embedding_status="pending",  # Mark as pending for embedding
-        )
-        chunk_objects.append(chunk_row)
-        db_session.add(chunk_row)
-    
-    db_session.commit()
-    logger.info(f"Saved {len(chunk_objects)} chunks to database")
-    
-    # Step 5: Generate embeddings and store in ChromaDB (same as regulations)
-    logger.info("Generating embeddings and storing in ChromaDB...")
-    embedding_service = EmbeddingService(db_session, config)
     try:
-        # Process in batches (same as regenerate_regulation_vectors.py)
-        batch_size = 1024
-        total_processed = 0
-        total_failed = 0
+        # Step 1: Create Document using DocumentService (same as regulations)
+        logger.info("Creating document for legislation upload...")
+        doc_service = DocumentService(Path(config.data_root), db_session)
+        document = doc_service.create_from_upload(
+            file,
+            source_type="regulation",  # Store as regulation so it's used in context building
+            organization="Legislation",
+            description=f"Legislation document: {filename}"
+        )
+        logger.info(f"Created document: {document.original_filename} (ID: {document.id}, External ID: {document.external_id})")
         
-        for i in range(0, len(chunk_objects), batch_size):
-            batch = chunk_objects[i:i + batch_size]
-            batch_num = (i // batch_size) + 1
-            total_batches = (len(chunk_objects) + batch_size - 1) // batch_size
-            
-            logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch)} chunks)...")
-            
-            # Use the same collection name as regulations
-            result = embedding_service.process_chunks(batch, collection_name="regulation_chunks")
-            
-            total_processed += result["processed"]
-            total_failed += result["failed"]
-            
-            logger.info(f"  Processed: {result['processed']}, Failed: {result['failed']}")
+        # Step 2: Extract text from document
+        logger.info("Extracting text from document...")
+        # Resolve storage path - handle both relative and absolute paths
+        storage_path = Path(config.data_root) / document.storage_path
+        if not storage_path.is_absolute():
+            storage_path = Path(config.data_root) / storage_path
         
-        logger.info(f"Embedding generation complete: {total_processed} processed, {total_failed} failed")
-    finally:
-        embedding_service.close()
+        # Normalize the path
+        storage_path = storage_path.resolve()
+        
+        if not storage_path.exists():
+            raise ValueError(f"Storage path does not exist: {storage_path} (resolved from {document.storage_path})")
+        
+        logger.info(f"Extracting from storage path: {storage_path}")
+        extractor = DocumentExtractor()
+        
+        try:
+            extracted_doc = extractor.extract(storage_path)
+            extraction_data = extracted_doc.to_dict()
+        except ExtractionError as e:
+            logger.error(f"Extraction failed: {e}")
+            raise ValueError(f"Failed to extract text from file: {e}") from e
+        except Exception as e:
+            logger.exception(f"Unexpected error during extraction: {e}")
+            raise ValueError(f"Unexpected error extracting text: {e}") from e
+        
+        # Convert to SectionText objects for chunking
+        sections = []
+        for idx, section_data in enumerate(extraction_data.get("sections", [])):
+            section_path = section_data.get("metadata", {}).get("section_path")
+            if isinstance(section_path, str):
+                section_path = [section_path]
+            elif not isinstance(section_path, list):
+                section_path = None
+            
+            sections.append(
+                SectionText(
+                    index=section_data.get("index", idx),
+                    title=section_data.get("title"),
+                    content=section_data.get("content", ""),
+                    section_path=[str(p) for p in section_path] if section_path else None,
+                    metadata=section_data.get("metadata", {}),
+                )
+            )
+        
+        if not sections:
+            # Fallback: create a single section from the full text
+            full_text = extraction_data.get("metadata", {}).get("full_text", "")
+            if not full_text:
+                # Try to read the file directly
+                logger.warning("No sections found, attempting direct file read...")
+                try:
+                    if storage_path.suffix.lower() == ".pdf":
+                        from PyPDF2 import PdfReader
+                        try:
+                            reader = PdfReader(str(storage_path))
+                            text_parts = []
+                            for page in reader.pages:
+                                text_parts.append(page.extract_text() or "")
+                            full_text = "\n".join(text_parts)
+                        except Exception as e:
+                            logger.error(f"PyPDF2 extraction failed: {e}")
+                            raise ValueError(f"Failed to extract text from PDF: {e}") from e
+                    else:
+                        try:
+                            with open(storage_path, "r", encoding="utf-8", errors="ignore") as f:
+                                full_text = f.read()
+                        except Exception as e:
+                            logger.error(f"File read failed: {e}")
+                            raise ValueError(f"Failed to read file: {e}") from e
+                except Exception as e:
+                    if isinstance(e, ValueError):
+                        raise
+                    logger.exception(f"Unexpected error in fallback extraction: {e}")
+                    raise ValueError(f"Failed to extract text: {e}") from e
+            
+            if not full_text.strip():
+                raise ValueError("No text extracted from file - file may be empty or corrupted")
+            
+            sections = [SectionText(index=0, title=None, content=full_text, section_path=None, metadata={})]
+            logger.info(f"Created fallback section with {len(full_text)} characters")
+        
+        # Step 3: Chunk the document (same as regulations)
+        logger.info(f"Chunking {len(sections)} sections...")
+        try:
+            chunker = SemanticChunker(config.chunking)
+            # Use section-aware chunking for legislation (one chunk per section)
+            payloads = chunker.chunk_sections(document.external_id, sections, section_aware=True)
+            logger.info(f"Generated {len(payloads)} chunks")
+        except Exception as e:
+            logger.exception(f"Chunking failed: {e}")
+            raise ValueError(f"Failed to chunk document: {e}") from e
+        
+        if not payloads:
+            raise ValueError("No chunks generated from document")
+        
+        # Step 4: Create Chunk objects in database
+        chunk_objects = []
+        try:
+            for idx, payload in enumerate(payloads):
+                metadata = {
+                    **payload.metadata,
+                    "chunk_id": payload.chunk_id,
+                    "section_path": payload.section_path,
+                    "parent_heading": payload.parent_heading,
+                }
+                section_path = " > ".join(payload.section_path).strip() if payload.section_path else None
+                chunk_row = Chunk(
+                    document_id=document.id,
+                    chunk_id=payload.chunk_id,
+                    chunk_index=idx,
+                    section_path=section_path,
+                    parent_heading=payload.parent_heading,
+                    content=payload.text,
+                    token_count=payload.token_count,
+                    chunk_metadata=metadata,
+                    embedding_status="pending",  # Mark as pending for embedding
+                )
+                chunk_objects.append(chunk_row)
+                db_session.add(chunk_row)
+            
+            db_session.commit()
+            logger.info(f"Saved {len(chunk_objects)} chunks to database")
+        except Exception as e:
+            logger.exception(f"Failed to save chunks to database: {e}")
+            db_session.rollback()
+            raise ValueError(f"Database error saving chunks: {e}") from e
+        
+        # Step 5: Generate embeddings and store in ChromaDB (same as regulations)
+        logger.info("Generating embeddings and storing in ChromaDB...")
+        embedding_service = None
+        try:
+            embedding_service = EmbeddingService(db_session, config)
+            # Process in batches (same as regenerate_regulation_vectors.py)
+            batch_size = 1024
+            total_processed = 0
+            total_failed = 0
+            
+            for i in range(0, len(chunk_objects), batch_size):
+                batch = chunk_objects[i:i + batch_size]
+                batch_num = (i // batch_size) + 1
+                total_batches = (len(chunk_objects) + batch_size - 1) // batch_size
+                
+                logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch)} chunks)...")
+                
+                try:
+                    # Use the same collection name as regulations
+                    result = embedding_service.process_chunks(batch, collection_name="regulation_chunks")
+                    
+                    total_processed += result["processed"]
+                    total_failed += result["failed"]
+                    
+                    logger.info(f"  Processed: {result['processed']}, Failed: {result['failed']}")
+                    
+                    if result.get("error"):
+                        logger.warning(f"Batch {batch_num} had errors: {result['error']}")
+                except Exception as e:
+                    logger.exception(f"Failed to process batch {batch_num}: {e}")
+                    total_failed += len(batch)
+                    # Continue with next batch instead of failing completely
+                    continue
+            
+            if total_failed > 0:
+                logger.warning(f"Embedding generation completed with {total_failed} failures out of {len(chunk_objects)} chunks")
+            else:
+                logger.info(f"Embedding generation complete: {total_processed} processed")
+        except Exception as e:
+            logger.exception(f"Embedding service failed: {e}")
+            # Don't fail completely - chunks are already saved
+            raise ValueError(f"Failed to generate embeddings: {e}") from e
+        finally:
+            if embedding_service:
+                embedding_service.close()
+        
+        # Also create a Legislation record for UI tracking
+        try:
+            legislation = Legislation(
+                filename=document.original_filename,
+                file_path=document.storage_path,
+                text_length=sum(len(s.content) for s in sections),
+                num_chunks=len(chunk_objects),
+            )
+            db_session.add(legislation)
+            db_session.commit()
+            logger.info(f"Created legislation record: {legislation.id}")
+        except Exception as e:
+            logger.exception(f"Failed to create legislation record: {e}")
+            db_session.rollback()
+            raise ValueError(f"Database error creating legislation record: {e}") from e
+        
+        return {
+            "id": legislation.id,
+            "filename": document.original_filename,
+            "path": document.storage_path,
+            "text_length": sum(len(s.content) for s in sections),
+            "num_chunks": len(chunk_objects),
+        }
     
-    # Also create a Legislation record for UI tracking
-    legislation = Legislation(
-        filename=document.original_filename,
-        file_path=document.storage_path,
-        text_length=sum(len(s.content) for s in sections),
-        num_chunks=len(chunk_objects),
-    )
-    db_session.add(legislation)
-    db_session.commit()
-    
-    return {
-        "id": legislation.id,
-        "filename": document.original_filename,
-        "path": document.storage_path,
-        "text_length": sum(len(s.content) for s in sections),
-        "num_chunks": len(chunk_objects),
-    }
+    except (ValueError, DocumentUploadError, ExtractionError) as e:
+        # These are expected errors - log and re-raise
+        logger.error(f"Legislation upload failed: {e}")
+        if document:
+            try:
+                # Try to clean up the document if it was created
+                db_session.delete(document)
+                db_session.commit()
+            except Exception:
+                db_session.rollback()
+        raise
+    except Exception as e:
+        # Unexpected errors - log and clean up
+        logger.exception(f"Unexpected error in process_legislation_file: {e}")
+        if document:
+            try:
+                db_session.delete(document)
+                db_session.commit()
+            except Exception:
+                db_session.rollback()
+        raise ValueError(f"Unexpected error processing legislation file: {e}") from e
 
