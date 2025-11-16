@@ -452,10 +452,13 @@ def process_legislation_file(file, filename: str, db_session: Session, config: A
     try:
         # Step 1: Create Document using DocumentService (same as regulations)
         logger.info("Creating document for legislation upload...")
-        # Normalize data_root for DocumentService to avoid double /data in paths
+        # Use data_root as-is - DocumentService will handle path construction correctly
+        # Only normalize if it ends with /data/data (double data)
         data_root_for_service = config.data_root.rstrip('/')
-        if data_root_for_service.endswith('/data'):
-            data_root_for_service = data_root_for_service[:-5]
+        if data_root_for_service.endswith('/data/data'):
+            # Remove trailing /data/data to get /app/data
+            data_root_for_service = data_root_for_service[:-10]
+            logger.warning(f"Normalized data_root from '{config.data_root}' to '{data_root_for_service}' to avoid double 'data'")
         logger.info(f"Using data_root for DocumentService: {data_root_for_service} (original: {config.data_root})")
         doc_service = DocumentService(Path(data_root_for_service), db_session)
         document = doc_service.create_from_upload(
@@ -471,12 +474,13 @@ def process_legislation_file(file, filename: str, db_session: Session, config: A
         # Resolve storage path - document.storage_path is relative to data_root
         # DocumentService stores paths relative to data_root (e.g., "uploads/2025/11/16/file.pdf")
         
-        # Normalize data_root - remove any trailing /data if present to avoid /app/data/data
+        # Normalize data_root - only remove /data/data (double data), not single /data
         data_root_str = config.data_root.rstrip('/')
-        if data_root_str.endswith('/data'):
-            # Remove trailing /data to avoid double data in path
-            data_root_str = data_root_str[:-5]
+        if data_root_str.endswith('/data/data'):
+            # Remove trailing /data/data to avoid triple data in path
+            data_root_str = data_root_str[:-10]
             logger.warning(f"Normalized data_root from '{config.data_root}' to '{data_root_str}' to avoid double 'data' in path")
+        # Don't remove single /data - that's the correct path!
         
         data_root_path = Path(data_root_str).resolve()
         storage_path_str = document.storage_path.strip()

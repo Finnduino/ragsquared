@@ -88,7 +88,8 @@ start_backend() {
         --bind 0.0.0.0:5000 \
         --workers 2 \
         --threads 2 \
-        --timeout 120 \
+        --timeout 3600 \
+        --keep-alive 5 \
         --access-logfile - \
         --error-logfile - \
         --log-level info \

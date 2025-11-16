@@ -11,6 +11,13 @@ const nextConfig = {
       },
     ];
   },
+  // Increase API route timeout for long-running operations (legislation uploads)
+  // Note: This is a server-side timeout, Railway may have its own limits
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '50mb',
+    },
+  },
 };
 
 module.exports = nextConfig;

@@ -116,20 +116,42 @@ export default function LegislationPage() {
     }, 200);
 
     try {
-      await api.legislation.upload(file);
+      const response = await api.legislation.upload(file);
 
       clearInterval(progressInterval);
       setProgress(100);
-      setSuccess(true);
-
-      // Reload legislations list
-      await loadLegislations();
+      
+      // Check if processing is happening in background
+      if (response.status === "processing") {
+        setSuccess(true);
+        // Show message that processing is happening in background
+        setError(null);
+        // Reload legislations list after a delay to check for new uploads
+        setTimeout(async () => {
+          await loadLegislations();
+        }, 5000);
+        
+        // Keep checking for new legislation
+        const checkInterval = setInterval(async () => {
+          await loadLegislations();
+        }, 10000); // Check every 10 seconds
+        
+        // Clear interval after 5 minutes
+        setTimeout(() => {
+          clearInterval(checkInterval);
+        }, 5 * 60 * 1000);
+      } else {
+        setSuccess(true);
+        // Reload legislations list
+        await loadLegislations();
+      }
 
       setTimeout(() => {
         setSuccess(false);
         setFile(null);
         setProgress(0);
-      }, 2000);
+        setUploading(false);
+      }, 3000);
     } catch (err: any) {
       clearInterval(progressInterval);
       setError(err.message || "Failed to upload legislation");
@@ -221,7 +243,7 @@ export default function LegislationPage() {
               <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-md flex items-center gap-2">
                 <CheckCircle2 className="h-5 w-5 text-green-500" />
                 <p className="text-sm text-green-700 dark:text-green-400">
-                  Legislation uploaded successfully!
+                  File uploaded! Processing in background. This may take several minutes. The legislation will appear in the list below when processing is complete.
                 </p>
               </div>
             )}

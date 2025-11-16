@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy import select
 
@@ -16,7 +17,11 @@ logger = get_logger(__name__)
 
 @bp.route("/upload", methods=["POST"])
 def upload_legislation() -> tuple[dict, int]:
-    """Upload legislation file, create embeddings, and store in DB."""
+    """Upload legislation file, create embeddings, and store in DB.
+    
+    This operation can take a long time (up to an hour for large files),
+    so it runs in a background thread and returns immediately.
+    """
     logger.info("Legislation upload request received")
     
     if "file" not in request.files:
@@ -30,10 +35,8 @@ def upload_legislation() -> tuple[dict, int]:
         logger.warning("Empty filename")
         return jsonify({"error": "invalid filename"}), 400
 
+    # Validate configuration before starting background processing
     try:
-        logger.info("Starting legislation file processing...")
-        db_session = get_session()
-        # Get config - ensure .env is loaded (it should be from app factory)
         config = AppConfig()
         logger.info(f"Data root: {config.data_root}, Embedding model: {config.embedding_model}")
         
@@ -49,28 +52,90 @@ def upload_legislation() -> tuple[dict, int]:
             return jsonify({
                 "error": "Configuration error: EMBEDDING_MODEL must be set in environment variables"
             }), 500
-        
-        logger.info("Calling process_legislation_file...")
-        result = process_legislation_file(file, file.filename, db_session, config)
-        logger.info(f"Legislation upload successful: {result['filename']}, {result['num_chunks']} chunks")
-        return jsonify({
-            "status": "ok",
-            "id": result["id"],
-            "filename": result["filename"],
-            "chunks": result["num_chunks"],
-            "text_length": result["text_length"],
-        }), 200
-    except DocumentUploadError as e:
-        # File upload/validation errors
-        logger.exception("Upload failed - document upload error")
-        return jsonify({"error": str(e)}), 400
-    except ValueError as e:
-        # Configuration or validation errors
-        logger.exception("Upload failed - validation error")
-        return jsonify({"error": str(e)}), 400
     except Exception as e:
-        logger.exception("Upload failed")
-        return jsonify({"error": str(e)}), 500
+        logger.exception("Configuration validation failed")
+        return jsonify({"error": f"Configuration error: {str(e)}"}), 500
+    
+    # Save file first (before background processing) so we can access it in the thread
+    from pathlib import Path
+    from werkzeug.utils import secure_filename
+    import tempfile
+    import shutil
+    
+    config = AppConfig()
+    # Normalize data_root
+    data_root_str = config.data_root.rstrip('/')
+    if data_root_str.endswith('/data/data'):
+        data_root_str = data_root_str[:-10]
+    data_root_path = Path(data_root_str).resolve()
+    
+    # Create temp file to save uploaded file
+    temp_dir = data_root_path / "temp_uploads"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    safe_filename = secure_filename(file.filename)
+    temp_file_path = temp_dir / f"{secure_filename(file.filename)}"
+    
+    try:
+        # Save file to temp location
+        file.save(str(temp_file_path))
+        logger.info(f"Saved uploaded file to temp location: {temp_file_path}")
+        
+        # Capture app instance and file info for background thread
+        app = current_app._get_current_object()
+        file_path_str = str(temp_file_path)
+        original_filename = file.filename
+        
+        def process_in_background():
+            """Background thread function to process legislation file."""
+            with app.app_context():
+                db_session = get_session()
+                config = AppConfig()
+                try:
+                    logger.info("Starting background processing of legislation file...")
+                    # Reopen file from saved location
+                    from werkzeug.datastructures import FileStorage
+                    with open(file_path_str, 'rb') as f:
+                        file_storage = FileStorage(
+                            stream=f,
+                            filename=original_filename,
+                            content_type=file.content_type
+                        )
+                        result = process_legislation_file(file_storage, original_filename, db_session, config)
+                        logger.info(f"Legislation upload successful: {result['filename']}, {result['num_chunks']} chunks")
+                except Exception as exc:
+                    logger.exception(f"Error processing legislation file in background: {exc}")
+                finally:
+                    # Clean up temp file
+                    try:
+                        if Path(file_path_str).exists():
+                            Path(file_path_str).unlink()
+                            logger.info(f"Cleaned up temp file: {file_path_str}")
+                    except Exception as cleanup_err:
+                        logger.warning(f"Failed to clean up temp file: {cleanup_err}")
+        
+        # Start background thread to process the file
+        process_thread = threading.Thread(
+            target=process_in_background,
+            daemon=True,
+        )
+        process_thread.start()
+        logger.info("Started background thread to process legislation file")
+        
+        # Return immediately - processing happens in background
+        return jsonify({
+            "status": "processing",
+            "message": "File upload accepted. Processing in background. This may take several minutes. Check the legislation list to see when it's complete.",
+            "filename": file.filename,
+        }), 202  # 202 Accepted - request accepted for processing
+    except Exception as e:
+        logger.exception("Failed to save uploaded file")
+        # Clean up temp file if it was created
+        try:
+            if temp_file_path.exists():
+                temp_file_path.unlink()
+        except Exception:
+            pass
+        return jsonify({"error": f"Failed to save uploaded file: {str(e)}"}), 500
 
 
 @bp.route("/list", methods=["GET"])

@@ -246,30 +246,32 @@ export const api = {
       const formData = new FormData();
       formData.append('file', file);
 
-      // Use AbortController for timeout (10 minutes for large files)
+      // Use shorter timeout since we return immediately (202 Accepted)
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10 * 60 * 1000); // 10 minutes
+      const timeoutId = setTimeout(() => controller.abort(), 60 * 1000); // 1 minute for file upload
 
       try {
         const response = await fetch(`${API_BASE_URL}/api/legislation/upload`, {
           method: 'POST',
           body: formData,
           signal: controller.signal,
-          // Don't set timeout here - let the server handle it
         });
 
         clearTimeout(timeoutId);
 
-        if (!response.ok) {
+        // Accept both 200 (success) and 202 (accepted for processing)
+        if (!response.ok && response.status !== 202) {
           const error = await response.json().catch(() => ({ error: 'Unknown error' }));
           throw new Error(error.error || `HTTP ${response.status}`);
         }
 
-        return response.json();
+        const data = await response.json();
+        // Add status code to response for frontend to handle
+        return { ...data, statusCode: response.status };
       } catch (err: any) {
         clearTimeout(timeoutId);
         if (err.name === 'AbortError') {
-          throw new Error('Upload timeout: The file is too large or processing is taking too long. Please try a smaller file or contact support.');
+          throw new Error('Upload timeout: The file upload is taking too long. Please try a smaller file.');
         }
         throw err;
       }
