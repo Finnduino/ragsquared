@@ -75,12 +75,55 @@ class EmbeddingClient:
         }
         payload = {"input": texts, "model": self.config.model}
 
-        response = self.client.post(url, json=payload, headers=headers)
-        response.raise_for_status()
-
-        data = response.json()
-        embeddings = [item["embedding"] for item in data["data"]]
-        return embeddings
+        try:
+            response = self.client.post(url, json=payload, headers=headers, timeout=300.0)  # 5 minute timeout
+            response.raise_for_status()
+            
+            # Check content type
+            content_type = response.headers.get("content-type", "")
+            if "application/json" not in content_type:
+                logger.error(f"Unexpected content type from OpenRouter: {content_type}")
+                logger.error(f"Response preview: {response.text[:500]}")
+                raise ValueError(f"OpenRouter API returned non-JSON response: {content_type}")
+            
+            # Try to parse JSON with better error handling
+            try:
+                data = response.json()
+            except Exception as json_err:
+                logger.error(f"Failed to parse JSON response from OpenRouter")
+                logger.error(f"Response status: {response.status_code}")
+                logger.error(f"Response headers: {dict(response.headers)}")
+                logger.error(f"Response text length: {len(response.text)}")
+                logger.error(f"Response preview (first 1000 chars): {response.text[:1000]}")
+                logger.error(f"Response preview (last 1000 chars): {response.text[-1000:]}")
+                raise ValueError(f"Invalid JSON response from OpenRouter API: {json_err}") from json_err
+            
+            # Validate response structure
+            if "data" not in data:
+                logger.error(f"Missing 'data' key in OpenRouter response: {data.keys()}")
+                raise ValueError("OpenRouter API response missing 'data' key")
+            
+            if not isinstance(data["data"], list):
+                logger.error(f"OpenRouter 'data' is not a list: {type(data['data'])}")
+                raise ValueError("OpenRouter API response 'data' is not a list")
+            
+            if len(data["data"]) != len(texts):
+                logger.warning(
+                    f"OpenRouter returned {len(data['data'])} embeddings for {len(texts)} texts"
+                )
+            
+            embeddings = []
+            for i, item in enumerate(data["data"]):
+                if "embedding" not in item:
+                    logger.error(f"Missing 'embedding' key in item {i}: {item.keys() if isinstance(item, dict) else type(item)}")
+                    raise ValueError(f"OpenRouter API response item {i} missing 'embedding' key")
+                embeddings.append(item["embedding"])
+            
+            return embeddings
+            
+        except Exception as e:
+            logger.exception(f"Error calling OpenRouter embedding API: {e}")
+            raise
 
     def close(self):
         """Close the HTTP client."""
@@ -112,7 +155,7 @@ class EmbeddingService:
             model=self.config.embedding_model,
             api_key=api_key,
             api_base_url=self.config.embedding_api_base_url,
-            batch_size=32,
+            batch_size=100,  # Smaller batches to avoid large responses
             cache_dir=cache_dir,
         )
 
@@ -157,7 +200,15 @@ class EmbeddingService:
             # Generate new embeddings
             if texts_to_embed:
                 logger.info(f"Generating {len(texts_to_embed)} new embeddings...")
-                new_embeddings = self.client.embed_texts(texts_to_embed)
+                try:
+                    new_embeddings = self.client.embed_texts(texts_to_embed)
+                except Exception as embed_err:
+                    logger.exception(f"Failed to generate embeddings: {embed_err}")
+                    # Mark chunks as failed
+                    for chunk in chunks:
+                        chunk.embedding_status = "failed"
+                    self.session.commit()
+                    return {"processed": 0, "failed": len(chunks), "error": str(embed_err)}
 
                 # Cache new embeddings
                 for text, embedding in zip(texts_to_embed, new_embeddings):
@@ -687,8 +738,9 @@ def process_legislation_file(file, filename: str, db_session: Session, config: A
         embedding_service = None
         try:
             embedding_service = EmbeddingService(db_session, config)
-            # Process in batches (same as regenerate_regulation_vectors.py)
-            batch_size = 1024
+            # Process in smaller batches to avoid large API responses
+            # OpenRouter may have limits on response size, so use smaller batches
+            batch_size = 100  # Reduced from 1024 to avoid large JSON responses
             total_processed = 0
             total_failed = 0
             
