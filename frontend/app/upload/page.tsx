@@ -211,22 +211,7 @@ export default function UploadPage() {
               />
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="source_type">Source Type</Label>
-              <select
-                id="source_type"
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                value={sourceType}
-                onChange={(e) => setSourceType(e.target.value)}
-                disabled={uploading}
-              >
-                <option value="manual">Manual</option>
-                <option value="regulation">Regulation</option>
-                <option value="amc">AMC (Acceptable Means of Compliance)</option>
-                <option value="gm">GM (Guidance Material)</option>
-                <option value="evidence">Evidence</option>
-              </select>
-            </div>
+            {/* Source type is always "manual" - removed dropdown */}
 
             <div className="space-y-2">
               <Label htmlFor="description">Description (Optional)</Label>
