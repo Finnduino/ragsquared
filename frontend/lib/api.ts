@@ -238,5 +238,29 @@ export const api = {
       return Array.from(regulations).sort();
     },
   },
+  legislation: {
+    upload: async (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await fetch(`${API_BASE_URL}/api/legislation/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(error.error || `HTTP ${response.status}`);
+      }
+
+      return response.json();
+    },
+    list: async () => {
+      return fetchAPI<{status: string, legislations: Array<{id: number, filename: string, chunks: number, uploaded_at: string}>}>(`/api/legislation/list`);
+    },
+    getChunks: async (legislationId: number) => {
+      return fetchAPI<{status: string, chunks: Array<{id: number, index: number, text: string}>}>(`/api/legislation/${legislationId}/chunks`);
+    },
+  },
 };
 

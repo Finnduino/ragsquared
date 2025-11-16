@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config.settings import AppConfig
-from ..db.models import Chunk, EmbeddingJob
+from ..db.models import Chunk, EmbeddingJob, Legislation, LegislationChunk
 
 logger = logging.getLogger(__name__)
 
@@ -411,4 +411,174 @@ class EmbeddingService:
     def close(self):
         """Close resources."""
         self.client.close()
+
+
+def process_legislation_file(file, filename: str, db_session: Session, config: AppConfig | None = None) -> dict[str, Any]:
+    """Save file, extract text, chunk, embed, and store in DB.
+    
+    This follows the same process as regenerate_regulation_vectors.py:
+    1. Create Document with source_type="regulation"
+    2. Extract text and create Chunk objects
+    3. Use EmbeddingService.process_chunks() to store in ChromaDB collection "regulation_chunks"
+    
+    Args:
+        file: FileStorage object from Flask request
+        filename: Original filename
+        db_session: Database session
+        config: AppConfig instance (if None, will create new one)
+        
+    Returns:
+        Dictionary with id, filename, num_chunks, text_length
+    """
+    from pathlib import Path
+    
+    from ..config.settings import AppConfig
+    from ..db.models import Document, Chunk, Legislation
+    from .documents import DocumentService
+    from .chunking import SemanticChunker, SectionText
+    from ..processing.extraction import DocumentExtractor
+    
+    if config is None:
+        config = AppConfig()
+    
+    # Step 1: Create Document using DocumentService (same as regulations)
+    logger.info("Creating document for legislation upload...")
+    doc_service = DocumentService(Path(config.data_root), db_session)
+    document = doc_service.create_from_upload(
+        file,
+        source_type="regulation",  # Store as regulation so it's used in context building
+        organization="Legislation",
+        description=f"Legislation document: {filename}"
+    )
+    logger.info(f"Created document: {document.original_filename} (ID: {document.id}, External ID: {document.external_id})")
+    
+    # Step 2: Extract text from document
+    logger.info("Extracting text from document...")
+    storage_path = Path(config.data_root) / document.storage_path
+    if not storage_path.exists():
+        raise ValueError(f"Storage path does not exist: {storage_path}")
+    
+    extractor = DocumentExtractor()
+    extracted_doc = extractor.extract(storage_path)
+    extraction_data = extracted_doc.to_dict()
+    
+    # Convert to SectionText objects for chunking
+    sections = []
+    for idx, section_data in enumerate(extraction_data.get("sections", [])):
+        section_path = section_data.get("metadata", {}).get("section_path")
+        if isinstance(section_path, str):
+            section_path = [section_path]
+        elif not isinstance(section_path, list):
+            section_path = None
+        
+        sections.append(
+            SectionText(
+                index=section_data.get("index", idx),
+                title=section_data.get("title"),
+                content=section_data.get("content", ""),
+                section_path=[str(p) for p in section_path] if section_path else None,
+                metadata=section_data.get("metadata", {}),
+            )
+        )
+    
+    if not sections:
+        # Fallback: create a single section from the full text
+        full_text = extraction_data.get("metadata", {}).get("full_text", "")
+        if not full_text:
+            # Try to read the file directly
+            if storage_path.suffix.lower() == ".pdf":
+                from PyPDF2 import PdfReader
+                reader = PdfReader(str(storage_path))
+                text_parts = []
+                for page in reader.pages:
+                    text_parts.append(page.extract_text() or "")
+                full_text = "\n".join(text_parts)
+            else:
+                with open(storage_path, "r", encoding="utf-8", errors="ignore") as f:
+                    full_text = f.read()
+        
+        if not full_text.strip():
+            raise ValueError("No text extracted from file")
+        
+        sections = [SectionText(index=0, title=None, content=full_text, section_path=None, metadata={})]
+    
+    # Step 3: Chunk the document (same as regulations)
+    logger.info(f"Chunking {len(sections)} sections...")
+    chunker = SemanticChunker(config.chunking)
+    # Use section-aware chunking for legislation (one chunk per section)
+    payloads = chunker.chunk_sections(document.external_id, sections, section_aware=True)
+    logger.info(f"Generated {len(payloads)} chunks")
+    
+    # Step 4: Create Chunk objects in database
+    chunk_objects = []
+    for idx, payload in enumerate(payloads):
+        metadata = {
+            **payload.metadata,
+            "chunk_id": payload.chunk_id,
+            "section_path": payload.section_path,
+            "parent_heading": payload.parent_heading,
+        }
+        section_path = " > ".join(payload.section_path).strip() if payload.section_path else None
+        chunk_row = Chunk(
+            document_id=document.id,
+            chunk_id=payload.chunk_id,
+            chunk_index=idx,
+            section_path=section_path,
+            parent_heading=payload.parent_heading,
+            content=payload.text,
+            token_count=payload.token_count,
+            chunk_metadata=metadata,
+            embedding_status="pending",  # Mark as pending for embedding
+        )
+        chunk_objects.append(chunk_row)
+        db_session.add(chunk_row)
+    
+    db_session.commit()
+    logger.info(f"Saved {len(chunk_objects)} chunks to database")
+    
+    # Step 5: Generate embeddings and store in ChromaDB (same as regulations)
+    logger.info("Generating embeddings and storing in ChromaDB...")
+    embedding_service = EmbeddingService(db_session, config)
+    try:
+        # Process in batches (same as regenerate_regulation_vectors.py)
+        batch_size = 1024
+        total_processed = 0
+        total_failed = 0
+        
+        for i in range(0, len(chunk_objects), batch_size):
+            batch = chunk_objects[i:i + batch_size]
+            batch_num = (i // batch_size) + 1
+            total_batches = (len(chunk_objects) + batch_size - 1) // batch_size
+            
+            logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch)} chunks)...")
+            
+            # Use the same collection name as regulations
+            result = embedding_service.process_chunks(batch, collection_name="regulation_chunks")
+            
+            total_processed += result["processed"]
+            total_failed += result["failed"]
+            
+            logger.info(f"  Processed: {result['processed']}, Failed: {result['failed']}")
+        
+        logger.info(f"Embedding generation complete: {total_processed} processed, {total_failed} failed")
+    finally:
+        embedding_service.close()
+    
+    # Also create a Legislation record for UI tracking
+    legislation = Legislation(
+        filename=document.original_filename,
+        file_path=document.storage_path,
+        text_length=sum(len(s.content) for s in sections),
+        num_chunks=len(chunk_objects),
+    )
+    db_session.add(legislation)
+    db_session.commit()
+    
+    return {
+        "id": legislation.id,
+        "filename": document.original_filename,
+        "path": document.storage_path,
+        "text_length": sum(len(s.content) for s in sections),
+        "num_chunks": len(chunk_objects),
+    }
 

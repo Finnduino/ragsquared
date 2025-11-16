@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     JSON,
+    LargeBinary,
     String,
     Text,
     func,
@@ -245,5 +246,35 @@ class ComplianceScore(Base, TimestampMixin):
     total_flags: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     audit: Mapped[Audit] = relationship()
+
+
+class Legislation(Base, TimestampMixin):
+    """Legislation documents uploaded for compliance checking."""
+    __tablename__ = "legislations"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    text_length: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    num_chunks: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    chunks: Mapped[list["LegislationChunk"]] = relationship(
+        "LegislationChunk", back_populates="legislation", cascade="all, delete-orphan"
+    )
+
+
+class LegislationChunk(Base, TimestampMixin):
+    """Chunks of legislation text with embeddings."""
+    __tablename__ = "legislation_chunks"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    legislation_id: Mapped[int] = mapped_column(
+        ForeignKey("legislations.id", ondelete="CASCADE"), nullable=False
+    )
+    chunk_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+
+    legislation: Mapped["Legislation"] = relationship("Legislation", back_populates="chunks")
 
 

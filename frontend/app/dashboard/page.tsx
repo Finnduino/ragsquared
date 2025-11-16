@@ -8,7 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { api, type AuditWithDetails } from "@/lib/api";
 import Link from "next/link";
-import { FileText, Upload, RefreshCw, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { FileText, Upload, RefreshCw, CheckCircle2, XCircle, Clock, Scale } from "lucide-react";
 import { format } from "date-fns";
 
 export default function DashboardPage() {
@@ -71,12 +71,20 @@ export default function DashboardPage() {
           <h1 className="text-4xl font-bold tracking-tight mb-2">Audit Dashboard</h1>
           <p className="text-muted-foreground">Manage and monitor your compliance audits</p>
         </div>
-        <Link href="/upload">
-          <Button>
-            <Upload className="mr-2 h-4 w-4" />
-            Upload Document
-          </Button>
-        </Link>
+        <div className="flex gap-2">
+          <Link href="/legislation">
+            <Button variant="outline">
+              <Scale className="mr-2 h-4 w-4" />
+              Legislation
+            </Button>
+          </Link>
+          <Link href="/upload">
+            <Button>
+              <Upload className="mr-2 h-4 w-4" />
+              Upload Document
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* Filters */}

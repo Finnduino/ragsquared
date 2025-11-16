@@ -50,6 +50,10 @@ def register_blueprints(app: Flask) -> None:
     app.register_blueprint(audits_pages_blueprint)
     app.register_blueprint(scores_blueprint)
     app.register_blueprint(review_blueprint)
+    
+    # Legislation upload API
+    from .api import legislation
+    app.register_blueprint(legislation.bp)
 
 
 def register_middleware(app: Flask) -> None:
