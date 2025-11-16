@@ -128,6 +128,7 @@ class RecursiveContextBuilder:
         # Track processed chunks to avoid infinite loops
         self._processed_chunk_ids: set[str] = set()
         self._processed_references: set[str] = set()
+        self._queued_chunk_ids: set[str] = set()  # Track chunks already in queue
     
     def build_recursive_context(
         self,
@@ -152,6 +153,7 @@ class RecursiveContextBuilder:
         """
         self._processed_chunk_ids.clear()
         self._processed_references.clear()
+        self._queued_chunk_ids.clear()
         
         # Start with base context
         logger.info(f"Building recursive context for chunk {chunk_id[:16]}...")
@@ -164,6 +166,7 @@ class RecursiveContextBuilder:
         
         # Track all chunks we need to process
         chunks_to_process: deque[tuple[str, int]] = deque([(chunk_id, 0)])  # (chunk_id, depth)
+        self._queued_chunk_ids.add(chunk_id)  # Mark initial chunk as queued
         all_manual_chunks: list[ContextSlice] = list(base_bundle.manual_neighbors)
         all_regulation_chunks: list[ContextSlice] = list(base_bundle.regulation_slices)
         all_guidance_chunks: list[ContextSlice] = list(base_bundle.guidance_slices)
@@ -173,11 +176,15 @@ class RecursiveContextBuilder:
         while chunks_to_process:
             current_chunk_id, depth = chunks_to_process.popleft()
             
+            # Remove from queued set when we start processing
+            self._queued_chunk_ids.discard(current_chunk_id)
+            
             if depth >= self.max_depth:
                 logger.debug(f"Skipping chunk {current_chunk_id[:16]} - max depth reached")
                 continue
             
             if current_chunk_id in self._processed_chunk_ids:
+                logger.debug(f"Skipping chunk {current_chunk_id[:16]} - already processed")
                 continue
             
             self._processed_chunk_ids.add(current_chunk_id)
@@ -207,8 +214,13 @@ class RecursiveContextBuilder:
                         all_manual_chunks.append(concept_chunk)
                         # Add to queue for recursive processing
                         concept_chunk_id = concept_chunk.metadata.get("chunk_id")
-                        if concept_chunk_id and concept_chunk_id not in self._processed_chunk_ids:
+                        # Skip self-reference and already processed/queued chunks
+                        if (concept_chunk_id and 
+                            concept_chunk_id != current_chunk_id and
+                            concept_chunk_id not in self._processed_chunk_ids and 
+                            concept_chunk_id not in self._queued_chunk_ids):
                             chunks_to_process.append((concept_chunk_id, depth + 1))
+                            self._queued_chunk_ids.add(concept_chunk_id)
             
             logger.info(f"Found {len(references)} references in chunk {current_chunk_id[:16]}")
             
@@ -236,14 +248,22 @@ class RecursiveContextBuilder:
                             all_regulation_chunks.append(reg_chunk)
                 
                 for ref_chunk in ref_chunks:
+                    ref_chunk_id = ref_chunk.metadata.get("chunk_id")
+                    
+                    # Skip if this is the same chunk we're currently processing (self-reference)
+                    if ref_chunk_id == current_chunk_id:
+                        logger.debug(f"Skipping self-reference: chunk {ref_chunk_id[:16]} references itself")
+                        continue
+                    
                     # Add to manual chunks if not already present
-                    if not any(c.metadata.get("chunk_id") == ref_chunk.metadata.get("chunk_id") 
+                    if not any(c.metadata.get("chunk_id") == ref_chunk_id 
                               for c in all_manual_chunks):
                         all_manual_chunks.append(ref_chunk)
-                        # Add to queue for recursive processing
-                        ref_chunk_id = ref_chunk.metadata.get("chunk_id")
-                        if ref_chunk_id and ref_chunk_id not in self._processed_chunk_ids:
-                            chunks_to_process.append((ref_chunk_id, depth + 1))
+                    
+                    # Add to queue for recursive processing (only if not already processed or queued)
+                    if ref_chunk_id and ref_chunk_id not in self._processed_chunk_ids and ref_chunk_id not in self._queued_chunk_ids:
+                        chunks_to_process.append((ref_chunk_id, depth + 1))
+                        self._queued_chunk_ids.add(ref_chunk_id)
             
             # Find litigation related to this chunk
             if include_litigation:
@@ -254,8 +274,13 @@ class RecursiveContextBuilder:
                         all_litigation_chunks.append(lit_chunk)
                         # Recursively process litigation references
                         lit_chunk_id = lit_chunk.metadata.get("chunk_id")
-                        if lit_chunk_id and lit_chunk_id not in self._processed_chunk_ids:
+                        # Skip self-reference and already processed/queued chunks
+                        if (lit_chunk_id and 
+                            lit_chunk_id != current_chunk_id and
+                            lit_chunk_id not in self._processed_chunk_ids and 
+                            lit_chunk_id not in self._queued_chunk_ids):
                             chunks_to_process.append((lit_chunk_id, depth + 1))
+                            self._queued_chunk_ids.add(lit_chunk_id)
         
         # Build final bundle
         final_bundle = ContextBundle(focus=base_bundle.focus)
