@@ -651,8 +651,28 @@ def process_legislation_file(file, filename: str, db_session: Session, config: A
                 chunk_objects.append(chunk_row)
                 db_session.add(chunk_row)
             
-            db_session.commit()
-            logger.info(f"Saved {len(chunk_objects)} chunks to database")
+            # Retry commit on database lock errors
+            import time
+            max_retries = 5
+            retry_delay = 0.1
+            
+            for attempt in range(max_retries):
+                try:
+                    db_session.commit()
+                    logger.info(f"Saved {len(chunk_objects)} chunks to database")
+                    break
+                except Exception as e:
+                    if "database is locked" in str(e).lower() and attempt < max_retries - 1:
+                        db_session.rollback()
+                        wait_time = retry_delay * (2 ** attempt)
+                        logger.warning(f"Database locked, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                        time.sleep(wait_time)
+                        # Re-add chunks for retry
+                        for chunk_row in chunk_objects:
+                            db_session.add(chunk_row)
+                        continue
+                    # Re-raise if not a lock error or last attempt
+                    raise
         except Exception as e:
             logger.exception(f"Failed to save chunks to database: {e}")
             db_session.rollback()
@@ -713,8 +733,27 @@ def process_legislation_file(file, filename: str, db_session: Session, config: A
                 num_chunks=len(chunk_objects),
             )
             db_session.add(legislation)
-            db_session.commit()
-            logger.info(f"Created legislation record: {legislation.id}")
+            
+            # Retry commit on database lock errors
+            import time
+            max_retries = 5
+            retry_delay = 0.1
+            
+            for attempt in range(max_retries):
+                try:
+                    db_session.commit()
+                    logger.info(f"Created legislation record: {legislation.id}")
+                    break
+                except Exception as e:
+                    if "database is locked" in str(e).lower() and attempt < max_retries - 1:
+                        db_session.rollback()
+                        wait_time = retry_delay * (2 ** attempt)
+                        logger.warning(f"Database locked, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                        time.sleep(wait_time)
+                        db_session.add(legislation)
+                        continue
+                    # Re-raise if not a lock error or last attempt
+                    raise
         except Exception as e:
             logger.exception(f"Failed to create legislation record: {e}")
             db_session.rollback()

@@ -83,9 +83,24 @@ class DocumentService:
         )
 
         self.session.add(document)
-        self.session.commit()
-        self.session.refresh(document)
-        return document
+        # Retry commit on database lock errors
+        import time
+        max_retries = 5
+        retry_delay = 0.1  # Start with 100ms
+        
+        for attempt in range(max_retries):
+            try:
+                self.session.commit()
+                self.session.refresh(document)
+                return document
+            except Exception as e:
+                if "database is locked" in str(e).lower() and attempt < max_retries - 1:
+                    self.session.rollback()
+                    wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                    time.sleep(wait_time)
+                    continue
+                # Re-raise if not a lock error or last attempt
+                raise
 
     def _persist_file(self, upload: FileStorage, extension: str) -> StoredUpload:
         date_folder = datetime.utcnow().strftime("%Y/%m/%d")
