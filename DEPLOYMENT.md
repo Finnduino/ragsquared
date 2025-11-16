@@ -37,7 +37,10 @@ This guide covers deploying the AI Auditing System to cloud platforms that suppo
      FLASK_DEBUG=0
      BACKEND_URL=http://localhost:5000
      ```
-   - **Important**: Set `BACKEND_URL=http://localhost:5000` so the frontend can proxy API calls to the backend (both run in the same container)
+   - **Important**: 
+     - Set `BACKEND_URL=http://localhost:5000` so Next.js can proxy API calls to the backend (both run in the same container)
+     - The frontend uses relative URLs (`/api/*`) which Next.js rewrites to the backend
+     - No CORS issues because requests are same-origin from the browser's perspective
 
 4. **Add persistent volume** (CRITICAL for data persistence):
    - Go to "Settings" → "Volumes"

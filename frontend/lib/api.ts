@@ -1,4 +1,7 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+// Use relative URLs so Next.js rewrites can proxy to backend
+// Next.js rewrites /api/* to BACKEND_URL/api/* server-side
+// This works in both development and production
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 export interface Audit {
   id: string;
