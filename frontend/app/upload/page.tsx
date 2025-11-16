@@ -146,6 +146,10 @@ export default function UploadPage() {
           <CardTitle className="text-3xl">Upload Document</CardTitle>
           <CardDescription>
             Upload a document to start a compliance audit. Supported formats: PDF, DOCX, Markdown, TXT, HTML.
+            <br />
+            <span className="text-xs text-muted-foreground mt-1 block">
+              ⏱️ Processing may take several minutes due to in-depth text extraction, semantic chunking, and embedding generation on a lightweight server.
+            </span>
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -257,6 +261,9 @@ export default function UploadPage() {
                 <Progress value={progress} className="h-2" />
                 <p className="text-sm text-muted-foreground text-center">
                   Uploading document... {progress}%
+                </p>
+                <p className="text-xs text-muted-foreground text-center italic">
+                  This may take several minutes due to in-depth processing on a lightweight server.
                 </p>
               </div>
             )}

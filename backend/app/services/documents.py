@@ -90,7 +90,18 @@ class DocumentService:
     def _persist_file(self, upload: FileStorage, extension: str) -> StoredUpload:
         date_folder = datetime.utcnow().strftime("%Y/%m/%d")
         target_dir = self.upload_root / date_folder
-        target_dir.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+        except PermissionError as e:
+            raise DocumentUploadError(
+                f"Permission denied creating upload directory: {target_dir}. "
+                f"On Railway, set RAILWAY_RUN_UID=0 environment variable. Error: {e}"
+            ) from e
+        except OSError as e:
+            raise DocumentUploadError(
+                f"Failed to create upload directory: {target_dir}. Error: {e}"
+            ) from e
 
         stored_filename = f"{uuid4().hex}{extension}"
         destination = target_dir / stored_filename
@@ -101,7 +112,18 @@ class DocumentService:
         except (AttributeError, OSError):
             pass
 
-        size_bytes, sha256_hash = self._stream_to_disk(stream, destination)
+        try:
+            size_bytes, sha256_hash = self._stream_to_disk(stream, destination)
+        except PermissionError as e:
+            raise DocumentUploadError(
+                f"Permission denied writing file: {destination}. "
+                f"On Railway, set RAILWAY_RUN_UID=0 environment variable. Error: {e}"
+            ) from e
+        except OSError as e:
+            raise DocumentUploadError(
+                f"Failed to write file: {destination}. Error: {e}"
+            ) from e
+        
         if size_bytes == 0:
             raise DocumentUploadError("Uploaded file is empty.")
 
@@ -124,14 +146,20 @@ class DocumentService:
     def _stream_to_disk(stream: BinaryIO, destination: Path) -> tuple[int, str]:
         sha256 = hashlib.sha256()
         total_bytes = 0
-        with destination.open("wb") as output:
-            while True:
-                chunk = stream.read(1024 * 1024)
-                if not chunk:
-                    break
-                sha256.update(chunk)
-                total_bytes += len(chunk)
-                output.write(chunk)
+        try:
+            with destination.open("wb") as output:
+                while True:
+                    chunk = stream.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    sha256.update(chunk)
+                    total_bytes += len(chunk)
+                    output.write(chunk)
+        except PermissionError as e:
+            raise PermissionError(
+                f"Permission denied writing to {destination}. "
+                f"On Railway, set RAILWAY_RUN_UID=0 environment variable."
+            ) from e
 
         return total_bytes, sha256.hexdigest()
 

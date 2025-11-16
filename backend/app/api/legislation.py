@@ -6,6 +6,7 @@ from sqlalchemy import select
 from ..db.session import get_session
 from ..logging_config import get_logger
 from ..services.embeddings import process_legislation_file
+from ..services.documents import DocumentUploadError
 from ..db.models import Legislation, LegislationChunk
 from ..config.settings import AppConfig
 
@@ -49,6 +50,10 @@ def upload_legislation() -> tuple[dict, int]:
             "chunks": result["num_chunks"],
             "text_length": result["text_length"],
         }), 200
+    except DocumentUploadError as e:
+        # File upload/validation errors
+        logger.exception("Upload failed - document upload error")
+        return jsonify({"error": str(e)}), 400
     except ValueError as e:
         # Configuration or validation errors
         logger.exception("Upload failed - validation error")

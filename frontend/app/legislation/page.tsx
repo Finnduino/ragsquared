@@ -162,6 +162,10 @@ export default function LegislationPage() {
           <CardTitle>Upload Legislation</CardTitle>
           <CardDescription>
             Upload PDF or text files containing regulations, AMCs, or guidance materials.
+            <br />
+            <span className="text-xs text-muted-foreground mt-1 block">
+              ⏱️ Processing may take several minutes due to in-depth text extraction, semantic chunking, and embedding generation on a lightweight server.
+            </span>
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -227,6 +231,9 @@ export default function LegislationPage() {
                 <Progress value={progress} className="h-2" />
                 <p className="text-sm text-muted-foreground text-center">
                   Processing and creating embeddings... {progress}%
+                </p>
+                <p className="text-xs text-muted-foreground text-center italic">
+                  This may take several minutes due to in-depth processing on a lightweight server.
                 </p>
               </div>
             )}

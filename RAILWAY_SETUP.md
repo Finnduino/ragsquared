@@ -129,8 +129,15 @@ Railway automatically provides HTTPS for all domains. You just need to set up a 
 **Problem**: Data lost after deployment
 - **Solution**: Verify volume is mounted at `/app/data` in Settings → Volumes
 
-**Problem**: Permission errors
-- **Solution**: Add environment variable `RAILWAY_RUN_UID=0` (if needed)
+**Problem**: Permission errors when uploading files
+- **Symptoms**: 
+  - "Permission denied" errors when uploading documents or legislation
+  - Errors like "Permission denied creating upload directory" or "Permission denied writing file"
+- **Solution**: 
+  1. Go to your Railway service → **Settings** → **Variables**
+  2. Add environment variable: `RAILWAY_RUN_UID=0`
+  3. Redeploy your service
+  4. This allows the container to run as root, which is needed for writing to Railway volumes
 
 **Problem**: Volume full
 - **Solution**: Upgrade plan or contact Railway support to increase size
